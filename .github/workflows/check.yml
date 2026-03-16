@@ -8,7 +8,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  quick-check:
+  lint-test:
     name: Lint & Test
     runs-on: ubuntu-latest
     steps:
@@ -26,16 +26,18 @@ jobs:
 
   security:
     name: Trivy Scan
+    needs: lint-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
         run: docker build -t nhinsight:check-${{ github.sha }} .
-      - name: Run Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: nhinsight:check-${{ github.sha }}
-          format: table
-          exit-code: 1
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
+      - name: Trivy vulnerability scan
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            nhinsight:check-${{ github.sha }}
