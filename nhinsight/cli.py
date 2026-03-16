@@ -55,7 +55,7 @@ environment variables:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nhinsight",
-        description="NHInsight — find and flag risky non-human identities across your cloud infrastructure",
+        description="NHInsight — find and flag risky non-human identities across cloud, Kubernetes, and GitHub",
         epilog=_MAIN_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

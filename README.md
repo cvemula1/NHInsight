@@ -2,9 +2,9 @@
 
 # 🔍 NHInsight
 
-**Find and fix risky non-human identities across your cloud infrastructure**
+**Find and fix risky non-human identities across cloud, Kubernetes, and GitHub**
 
-*The open-source CLI for NHI discovery, risk analysis, and attack path detection*
+*Open-source CLI for NHI discovery, risk analysis, and attack path detection*
 
 [![CI](https://github.com/cvemula1/NHInsight/actions/workflows/ci.yml/badge.svg)](https://github.com/cvemula1/NHInsight/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/pypi/pyversions/nhinsight?logo=python&logoColor=white)](https://pypi.org/project/nhinsight/)
