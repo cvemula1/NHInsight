@@ -49,6 +49,23 @@ class AzureProvider(BaseProvider):
         resp.raise_for_status()
         return resp.json()
 
+    def _graph_get_all(self, path: str) -> list:
+        """Get all pages from a Microsoft Graph API list endpoint."""
+        import requests
+
+        headers = {"Authorization": f"Bearer {self._get_graph_token()}"}
+        url = f"https://graph.microsoft.com/v1.0{path}"
+        results = []
+
+        while url:
+            resp = requests.get(url, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            results.extend(data.get("value", []))
+            url = data.get("@odata.nextLink")
+
+        return results
+
     def _get_auth_client(self):
         """Get Azure authorization management client for RBAC queries."""
         if self._auth_client is None:
@@ -125,8 +142,7 @@ class AzureProvider(BaseProvider):
         identities: List[Identity] = []
 
         try:
-            data = self._graph_get("/servicePrincipals?$top=999")
-            sps = data.get("value", [])
+            sps = self._graph_get_all("/servicePrincipals?$top=999")
 
             for sp in sps:
                 sp_id = sp.get("id", "")
@@ -192,11 +208,10 @@ class AzureProvider(BaseProvider):
         identities: List[Identity] = []
 
         try:
-            data = self._graph_get(
+            mis = self._graph_get_all(
                 "/servicePrincipals?$filter=servicePrincipalType eq 'ManagedIdentity'"
                 "&$top=999"
             )
-            mis = data.get("value", [])
 
             for mi in mis:
                 sp_id = mi.get("id", "")
@@ -259,11 +274,10 @@ class AzureProvider(BaseProvider):
         identities: List[Identity] = []
 
         try:
-            data = self._graph_get(
+            apps = self._graph_get_all(
                 "/applications?$select=id,appId,displayName,"
                 "passwordCredentials,keyCredentials&$top=999"
             )
-            apps = data.get("value", [])
 
             for app in apps:
                 app_id = app.get("appId", "")
