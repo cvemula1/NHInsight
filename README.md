@@ -27,7 +27,7 @@
 
 ## The Problem
 
-Non-human identities outnumber humans **45:1** in most orgs. They're the service accounts with admin privs created 3 years ago by someone who left, the access keys nobody rotated, the deploy keys nobody tracks. Every major breach in 2024-2025 (Okta, Cloudflare, Microsoft Midnight Blizzard) involved NHIs.
+Non-human identities outnumber humans **45:1** in most orgs. They're the service accounts with admin privs created 3 years ago by someone who left, the access keys nobody rotated, the deploy keys nobody tracks. Most major cloud breaches in recent years traced back to compromised non-human identities.
 
 Enterprise NHI tools charge **$50K+/year**. NHInsight does it for free.
 
