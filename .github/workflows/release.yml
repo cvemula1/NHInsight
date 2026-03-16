@@ -6,7 +6,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  DOCKER_IMAGE: cvemula1/nhinsight
+  DOCKER_IMAGE: chvemula/nhinsight
 
 permissions:
   contents: write
@@ -130,7 +130,7 @@ jobs:
             ### Install
 
             ```bash
-            docker pull cvemula1/nhinsight:${{ steps.version.outputs.VERSION }}
+            docker pull chvemula/nhinsight:${{ steps.version.outputs.VERSION }}
             ```
 
             ### Changes
