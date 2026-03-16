@@ -9,7 +9,7 @@
 [![CI](https://github.com/cvemula1/NHInsight/actions/workflows/ci.yml/badge.svg)](https://github.com/cvemula1/NHInsight/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/pypi/pyversions/nhinsight?logo=python&logoColor=white)](https://pypi.org/project/nhinsight/)
 [![PyPI](https://img.shields.io/pypi/v/nhinsight?color=blue&logo=pypi&logoColor=white)](https://pypi.org/project/nhinsight/)
-[![Docker](https://img.shields.io/docker/v/cvemula1/nhinsight?label=docker&logo=docker&logoColor=white&sort=semver)](https://hub.docker.com/r/cvemula1/nhinsight)
+[![Docker](https://img.shields.io/docker/v/chvemula/nhinsight?label=docker&logo=docker&logoColor=white&sort=semver)](https://hub.docker.com/r/chvemula/nhinsight)
 [![License](https://img.shields.io/github/license/cvemula1/NHInsight?color=green)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/cvemula1/NHInsight?style=social)](https://github.com/cvemula1/NHInsight)
 
