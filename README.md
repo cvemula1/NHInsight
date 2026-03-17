@@ -262,6 +262,85 @@ Example chains NHInsight detects:
 - **GitHub Actions → IaC** — Self-hosted runner MI → Terraform apply (infrastructure control)
 - **GitHub Actions → K8s** — MI → AKS credentials → kubectl exec, Helm deployments
 
+```mermaid
+flowchart LR
+  subgraph GitHub Actions
+    wf1["deploy.yml<br/>(self-hosted runner)"]
+    wf2["ci.yml<br/>(OIDC)"]
+  end
+
+  subgraph Cloud Identity
+    mi["Managed Identity"]
+    oidc_aws["OIDC → AWS Role"]
+    oidc_az["OIDC → Azure SP"]
+  end
+
+  subgraph Azure Resources
+    kv{{"Key Vault<br/>secrets"}}
+    aks{{"AKS Cluster"}}
+    acr["ACR Registry"]
+    sql[("Azure SQL")]
+    storage[("Storage Account")]
+  end
+
+  subgraph AWS Resources
+    s3[("S3 Bucket")]
+    secrets{{"Secrets Manager"}}
+    eks{{"EKS Cluster"}}
+    iam{{"IAM Roles"}}
+  end
+
+  subgraph Kubernetes
+    helm["Helm Deploy"]
+    k8s_secret{{"K8s Secrets"}}
+    kubectl["kubectl exec"]
+  end
+
+  subgraph IaC
+    tf{{"Terraform Apply"}}
+  end
+
+  wf1 -->|"az login --identity"| mi
+  wf2 -->|"OIDC token"| oidc_aws
+  wf2 -->|"OIDC token"| oidc_az
+
+  mi -->|"secret access"| kv
+  mi -->|"get-credentials"| aks
+  mi -->|"acr login"| acr
+  mi -->|"query"| sql
+  mi -->|"blob upload"| storage
+
+  oidc_aws -->|"assumes role"| iam
+  iam -->|"s3 cp"| s3
+  iam -->|"get-secret"| secrets
+  iam -->|"eks get-token"| eks
+
+  aks -->|"helm upgrade"| helm
+  aks -->|"create secret"| k8s_secret
+  aks -->|"exec"| kubectl
+
+  mi -->|"tf apply"| tf
+
+  style wf1 fill:#24292e,stroke:#444,color:#fff
+  style wf2 fill:#24292e,stroke:#444,color:#fff
+  style mi fill:#0078d4,stroke:#005a9e,color:#fff
+  style oidc_aws fill:#FF9900,stroke:#232F3E,color:#232F3E
+  style oidc_az fill:#0078d4,stroke:#005a9e,color:#fff
+  style kv fill:#c00,stroke:#900,color:#fff
+  style aks fill:#326CE5,stroke:#1a3a6e,color:#fff
+  style acr fill:#0078d4,stroke:#005a9e,color:#fff
+  style sql fill:#0078d4,stroke:#005a9e,color:#fff
+  style storage fill:#0078d4,stroke:#005a9e,color:#fff
+  style s3 fill:#FF9900,stroke:#232F3E,color:#232F3E
+  style secrets fill:#c00,stroke:#900,color:#fff
+  style eks fill:#FF9900,stroke:#232F3E,color:#232F3E
+  style iam fill:#FF9900,stroke:#232F3E,color:#232F3E
+  style helm fill:#0f1689,stroke:#0a0f5c,color:#fff
+  style k8s_secret fill:#c00,stroke:#900,color:#fff
+  style kubectl fill:#326CE5,stroke:#1a3a6e,color:#fff
+  style tf fill:#7b42bc,stroke:#5c2d91,color:#fff
+```
+
 ### GitHub Actions Workflow Scanning
 
 Scan CI/CD workflows for identity and resource access attack paths:
