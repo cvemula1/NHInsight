@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nhinsight"
-version = "0.1.0"
+version = "0.2.0"
 description = "Discover risky non-human identities and privilege paths across AWS, Azure, GCP, GitHub, and Kubernetes"
 readme = "README.md"
 license = {text = "MIT"}
