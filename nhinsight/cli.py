@@ -1126,10 +1126,10 @@ def _print_demo_table(result: ScanResult) -> None:
 
     # Post-demo suggestions
     print(f"  {BOLD}Try it on your infrastructure:{RESET}")
-    print(f"    nhinsight scan --aws              Scan AWS IAM")
-    print(f"    nhinsight scan --all              Scan all providers")
-    print(f"    nhinsight scan --aws --explain    AI-powered explanations")
-    print(f"    nhinsight scan --all -f sarif     SARIF for GitHub Security tab")
+    print("    nhinsight scan --aws              Scan AWS IAM")
+    print("    nhinsight scan --all              Scan all providers")
+    print("    nhinsight scan --aws --explain    AI-powered explanations")
+    print("    nhinsight scan --all -f sarif     SARIF for GitHub Security tab")
     print()
 
 
@@ -1273,9 +1273,9 @@ def main():
         print(f"nhinsight {__version__}")
     else:
         parser.print_help()
-        print(f"\n  \033[1mQuick start:\033[0m")
-        print(f"    nhinsight demo            # sample data, no credentials needed")
-        print(f"    nhinsight scan --aws      # scan your AWS account")
+        print("\n  \033[1mQuick start:\033[0m")
+        print("    nhinsight demo            # sample data, no credentials needed")
+        print("    nhinsight scan --aws      # scan your AWS account")
         print()
 
 

@@ -9,7 +9,6 @@ from typing import TextIO
 
 from nhinsight.core.models import Severity
 
-
 # Provider → Mermaid CSS class color
 PROVIDER_STYLES = {
     "aws": "fill:#FF9900,stroke:#232F3E,color:#232F3E",
@@ -186,7 +185,7 @@ def render_summary_table(ap_result, out: TextIO = sys.stdout) -> None:
     paths = ap_result.paths
     stats = ap_result.graph_stats
 
-    out.write(f"## Privilege Escalation Paths\n\n")
+    out.write("## Privilege Escalation Paths\n\n")
     out.write(f"Graph: {stats.get('nodes', 0)} nodes, ")
     out.write(f"{stats.get('edges', 0)} edges, ")
     out.write(f"{stats.get('entry_points', 0)} entry points, ")

@@ -22,10 +22,8 @@ from nhinsight.core.models import (
     Identity,
     IdentityType,
     Provider,
-    RiskFlag,
     Severity,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
