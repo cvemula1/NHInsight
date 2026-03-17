@@ -8,7 +8,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from nhinsight.core.models import (
     Classification,
@@ -54,9 +54,13 @@ _GCP_SA_RE = re.compile(
     r"service_account:\s*(\S+)", re.IGNORECASE
 )
 
-# OIDC permission detection
+# OIDC permission detection (skip commented lines)
 _OIDC_PERM_RE = re.compile(
-    r"id-token:\s*write", re.IGNORECASE
+    r"^[^#\n]*id-token:\s*write", re.IGNORECASE | re.MULTILINE
+)
+# permissions: write-all grants id-token: write implicitly
+_WRITE_ALL_RE = re.compile(
+    r"^[^#\n]*permissions:\s*write-all", re.IGNORECASE | re.MULTILINE
 )
 
 # Azure Managed Identity login (self-hosted runners)
@@ -64,9 +68,11 @@ _AZ_MI_LOGIN_RE = re.compile(
     r"az\s+login\s+--identity", re.IGNORECASE
 )
 
-# Key Vault secret access (handles both literal and ${{ env.* }} / ${{ secrets.* }} values)
+# Key Vault secret access — match both arg orders, handle ${{ }} expressions
 _KV_SECRET_RE = re.compile(
-    r"az\s+keyvault\s+secret\s+show\s+--vault-name\s+(\S+)\s+--name\s+(\S+)",
+    r"az\s+keyvault\s+secret\s+show"
+    r"(?=.*--vault-name\s+(?P<vault>\$\{\{[^}]+\}\}|\S+))"
+    r"(?=.*--name\s+(?P<secret>\$\{\{[^}]+\}\}|\S+))",
     re.IGNORECASE,
 )
 # Key Vault name from env var assignment (e.g. BACKEND_VAULT_NAME: "seaionl-secrets")
@@ -80,13 +86,162 @@ _AKS_CREDS_RE = re.compile(
     r"az\s+aks\s+get-credentials", re.IGNORECASE
 )
 
-# Self-hosted runner detection
-_SELF_HOSTED_RE = re.compile(
+# Self-hosted runner detection — array format [label1, label2]
+_SELF_HOSTED_ARRAY_RE = re.compile(
     r"runs-on:\s*\[([^\]]+)\]", re.IGNORECASE
+)
+# Self-hosted runner detection — string format (no brackets, no ${{ }}, no group:/labels: keys)
+_SELF_HOSTED_STR_RE = re.compile(
+    r"runs-on:\s*(?!\[)(?!\$)(?!group:)(?!labels:)(\S+)", re.IGNORECASE
 )
 
 # Secrets reference pattern
 _SECRETS_RE = re.compile(r"\$\{\{\s*secrets\.(\w+)\s*\}\}")
+
+
+# ── Resource access detection ──────────────────────────────────────────
+
+@dataclass
+class ResourceAccess:
+    """A cloud/infra resource accessed from a workflow."""
+    resource_type: str    # azure_keyvault, azure_acr, azure_aks, k8s, helm, etc.
+    action: str           # e.g. "secret show", "login", "get-credentials"
+    resource_name: str = ""  # e.g. vault name, ACR name, cluster name
+    severity: str = "high"   # critical, high, medium, low
+    details: str = ""
+
+
+# Extensible table: (regex, resource_type, action, severity, name_group_index)
+# name_group_index: which regex group contains the resource name (0 = none)
+_RESOURCE_PATTERNS: List[tuple] = [
+    # ── Azure ──
+    (re.compile(r"az\s+keyvault\s+secret", re.I),
+     "azure_keyvault", "secret access", "high", 0),
+    (re.compile(r"az\s+acr\s+login\s+--name\s+(\S+)", re.I),
+     "azure_acr", "registry login", "high", 1),
+    (re.compile(r"az\s+acr\s+repository", re.I),
+     "azure_acr", "repository access", "medium", 0),
+    (re.compile(r"az\s+aks\s+get-credentials", re.I),
+     "azure_aks", "cluster credentials", "high", 0),
+    (re.compile(r"az\s+aks\s+show", re.I),
+     "azure_aks", "cluster info", "low", 0),
+    (re.compile(r"az\s+storage\s+(?:blob|container|account)", re.I),
+     "azure_storage", "storage access", "high", 0),
+    (re.compile(r"az\s+sql", re.I),
+     "azure_sql", "database access", "high", 0),
+    (re.compile(r"az\s+cosmosdb", re.I),
+     "azure_cosmosdb", "cosmosdb access", "high", 0),
+    (re.compile(r"az\s+servicebus", re.I),
+     "azure_servicebus", "service bus access", "medium", 0),
+    (re.compile(r"az\s+eventhubs?", re.I),
+     "azure_eventhub", "event hub access", "medium", 0),
+    (re.compile(r"az\s+appconfig", re.I),
+     "azure_appconfig", "app configuration", "medium", 0),
+    (re.compile(r"az\s+network", re.I),
+     "azure_network", "network access", "medium", 0),
+    (re.compile(r"az\s+dns", re.I),
+     "azure_dns", "DNS management", "high", 0),
+    (re.compile(r"az\s+webapp", re.I),
+     "azure_webapp", "web app access", "high", 0),
+    (re.compile(r"az\s+functionapp", re.I),
+     "azure_functions", "function app access", "high", 0),
+    (re.compile(r"az\s+ad\s+(?:app|sp)", re.I),
+     "azure_ad", "AD app/SP management", "critical", 0),
+    (re.compile(r"az\s+role\s+assignment", re.I),
+     "azure_iam", "role assignment", "critical", 0),
+    # ── AWS ──
+    (re.compile(r"aws\s+s3", re.I),
+     "aws_s3", "S3 access", "high", 0),
+    (re.compile(r"aws\s+secretsmanager", re.I),
+     "aws_secrets", "Secrets Manager access", "high", 0),
+    (re.compile(r"aws\s+sts", re.I),
+     "aws_sts", "STS assume-role", "high", 0),
+    (re.compile(r"aws\s+ec2", re.I),
+     "aws_ec2", "EC2 access", "high", 0),
+    (re.compile(r"aws\s+iam", re.I),
+     "aws_iam", "IAM management", "critical", 0),
+    (re.compile(r"aws\s+lambda", re.I),
+     "aws_lambda", "Lambda access", "high", 0),
+    (re.compile(r"aws\s+ecr", re.I),
+     "aws_ecr", "ECR access", "high", 0),
+    (re.compile(r"aws\s+eks", re.I),
+     "aws_eks", "EKS access", "high", 0),
+    (re.compile(r"aws\s+rds", re.I),
+     "aws_rds", "RDS access", "high", 0),
+    (re.compile(r"aws\s+dynamodb", re.I),
+     "aws_dynamodb", "DynamoDB access", "high", 0),
+    (re.compile(r"aws\s+cloudformation", re.I),
+     "aws_cloudformation", "CloudFormation access", "critical", 0),
+    # ── GCP ──
+    (re.compile(r"gcloud\s+compute", re.I),
+     "gcp_compute", "Compute Engine access", "high", 0),
+    (re.compile(r"gcloud\s+container\s+clusters", re.I),
+     "gcp_gke", "GKE cluster access", "high", 0),
+    (re.compile(r"gcloud\s+secrets", re.I),
+     "gcp_secrets", "Secret Manager access", "high", 0),
+    (re.compile(r"gcloud\s+sql", re.I),
+     "gcp_sql", "Cloud SQL access", "high", 0),
+    (re.compile(r"gcloud\s+iam", re.I),
+     "gcp_iam", "IAM management", "critical", 0),
+    (re.compile(r"gsutil", re.I),
+     "gcp_storage", "Cloud Storage access", "high", 0),
+    # ── Kubernetes ──
+    (re.compile(r"kubectl\s+apply", re.I),
+     "k8s", "resource apply", "high", 0),
+    (re.compile(r"kubectl\s+create\s+secret", re.I),
+     "k8s_secret", "secret creation", "high", 0),
+    (re.compile(r"kubectl\s+create\s+configmap", re.I),
+     "k8s_configmap", "configmap creation", "medium", 0),
+    (re.compile(r"kubectl\s+(?:delete|patch|replace)", re.I),
+     "k8s", "resource mutation", "high", 0),
+    (re.compile(r"kubectl\s+exec", re.I),
+     "k8s", "pod exec", "critical", 0),
+    # ── Helm ──
+    (re.compile(r"helm\s+(?:upgrade|install)", re.I),
+     "helm", "deployment", "high", 0),
+    # ── Docker / Container Registry ──
+    (re.compile(r"docker\s+push", re.I),
+     "container_registry", "image push", "high", 0),
+    (re.compile(r"docker\s+(?:build|buildx)", re.I),
+     "container_build", "image build", "medium", 0),
+    # ── Infrastructure as Code ──
+    (re.compile(r"terraform\s+apply", re.I),
+     "terraform", "infra apply", "critical", 0),
+    (re.compile(r"terraform\s+plan", re.I),
+     "terraform", "infra plan", "high", 0),
+    (re.compile(r"terraform\s+destroy", re.I),
+     "terraform", "infra destroy", "critical", 0),
+    (re.compile(r"pulumi\s+up", re.I),
+     "pulumi", "infra apply", "critical", 0),
+    (re.compile(r"ansible-playbook", re.I),
+     "ansible", "config management", "high", 0),
+    # ── External APIs ──
+    (re.compile(r"cloudflare", re.I),
+     "cloudflare", "DNS/CDN management", "high", 0),
+]
+
+
+def _detect_resource_access(content: str) -> List[ResourceAccess]:
+    """Detect all cloud/infra resource access patterns in workflow content."""
+    seen: set = set()
+    resources: List[ResourceAccess] = []
+    for pattern, rtype, action, severity, name_idx in _RESOURCE_PATTERNS:
+        for m in pattern.finditer(content):
+            key = (rtype, action)
+            if key in seen:
+                continue
+            seen.add(key)
+            name = ""
+            if name_idx and name_idx <= len(m.groups()):
+                name = m.group(name_idx)
+            resources.append(ResourceAccess(
+                resource_type=rtype,
+                action=action,
+                resource_name=_resolve_value(name) if name else "",
+                severity=severity,
+            ))
+            break  # one match per pattern is enough
+    return resources
 
 
 @dataclass
@@ -109,6 +264,7 @@ class WorkflowOIDCConnection:
     has_aks_access: bool = False
     trigger_events: List[str] = field(default_factory=list)
     secrets_used: List[str] = field(default_factory=list)
+    cloud_resources: List[ResourceAccess] = field(default_factory=list)
     raw_step: str = ""
 
 
@@ -161,9 +317,23 @@ def scan_workflows(
         result.errors.append(f"No workflow files found in {path}")
         return result
 
+    # Resolve .github root for local composite action resolution
+    github_root = None
+    if wf_path.is_dir():
+        # .github/workflows -> .github
+        candidate = wf_path.parent
+        if candidate.name == ".github":
+            github_root = candidate
+    elif wf_path.is_file():
+        candidate = wf_path.parent.parent
+        if candidate.name == ".github":
+            github_root = candidate
+
     for wf_file in files:
         try:
             content = wf_file.read_text()
+            # Inline local composite action content for pattern matching
+            content = _inline_local_actions(content, github_root)
             connections = _parse_workflow(content, str(wf_file), repo_name)
             result.oidc_connections.extend(connections)
             result.workflows_scanned += 1
@@ -183,6 +353,40 @@ def scan_workflows(
     return result
 
 
+# ── Local composite action inlining ───────────────────────────────────
+
+_LOCAL_ACTION_RE = re.compile(
+    r"uses:\s*\./\.github/actions/([\w._-]+)", re.IGNORECASE
+)
+
+
+def _inline_local_actions(content: str, github_root: Optional[Path]) -> str:
+    """Append content from referenced local composite actions.
+
+    When a workflow references ``uses: ./.github/actions/<name>``, read
+    the corresponding ``action.yml`` / ``action.yaml`` and append its
+    content so that regex-based pattern matching picks up commands
+    defined inside composite actions (e.g. ``az login --identity``).
+    """
+    if not github_root:
+        return content
+    seen: set = set()
+    for m in _LOCAL_ACTION_RE.finditer(content):
+        action_name = m.group(1)
+        if action_name in seen:
+            continue
+        seen.add(action_name)
+        for ext in ("action.yml", "action.yaml"):
+            action_file = github_root / "actions" / action_name / ext
+            if action_file.is_file():
+                try:
+                    content += "\n" + action_file.read_text()
+                except Exception:
+                    pass
+                break
+    return content
+
+
 def _parse_workflow(content: str, filepath: str, repo_name: str) -> List[WorkflowOIDCConnection]:
     """Parse a single workflow file for OIDC connections.
 
@@ -197,8 +401,8 @@ def _parse_workflow(content: str, filepath: str, repo_name: str) -> List[Workflo
     if name_match:
         wf_name = name_match.group(1).strip().strip("'\"")
 
-    # Check for OIDC permission
-    has_oidc = bool(_OIDC_PERM_RE.search(content))
+    # Check for OIDC permission (explicit id-token: write or permissions: write-all)
+    has_oidc = bool(_OIDC_PERM_RE.search(content)) or bool(_WRITE_ALL_RE.search(content))
 
     # Extract trigger events
     triggers = _extract_triggers(content)
@@ -206,23 +410,35 @@ def _parse_workflow(content: str, filepath: str, repo_name: str) -> List[Workflo
     # Extract secrets used
     secrets = _SECRETS_RE.findall(content)
 
-    # Detect self-hosted runners
+    # Detect self-hosted runners (both array and string formats)
     runner_labels = []
-    for m in _SELF_HOSTED_RE.finditer(content):
-        labels = [label.strip().strip("'\"") for label in m.group(1).split(",")]
-        runner_labels.extend(labels)
+    for m in _SELF_HOSTED_ARRAY_RE.finditer(content):
+        for raw in m.group(1).split(","):
+            cleaned = raw.strip().strip("'\"")
+            if not cleaned.startswith("${{"):
+                runner_labels.append(cleaned)
+    for m in _SELF_HOSTED_STR_RE.finditer(content):
+        runner_labels.append(m.group(1).strip().strip("'\""))
     # Filter out standard GitHub-hosted runners
-    gh_hosted = {"ubuntu-latest", "ubuntu-22.04", "ubuntu-20.04",
-                 "windows-latest", "macos-latest", "macos-14", "macos-13"}
+    gh_hosted = {"ubuntu-latest", "ubuntu-22.04", "ubuntu-20.04", "ubuntu-24.04",
+                 "windows-latest", "windows-2022", "windows-2019",
+                 "macos-latest", "macos-14", "macos-13", "macos-12"}
     self_hosted_labels = [label for label in runner_labels if label not in gh_hosted]
-    self_hosted_runner = ", ".join(self_hosted_labels) if self_hosted_labels else ""
+    # Deduplicate while preserving order
+    seen = set()
+    unique_labels = []
+    for label in self_hosted_labels:
+        if label not in seen:
+            seen.add(label)
+            unique_labels.append(label)
+    self_hosted_runner = ", ".join(unique_labels) if unique_labels else ""
 
     # Detect Key Vault secrets accessed
     kv_secrets = []
     kv_name = ""
     for m in _KV_SECRET_RE.finditer(content):
-        vault = _resolve_value(m.group(1))
-        secret_name = _resolve_value(m.group(2))
+        vault = _resolve_value(m.group("vault"))
+        secret_name = _resolve_value(m.group("secret"))
         kv_secrets.append(secret_name)
         # Pick up the vault name if it's a literal (not a ${{ }} ref)
         if not kv_name and not vault.startswith("$"):
@@ -235,6 +451,9 @@ def _parse_workflow(content: str, filepath: str, repo_name: str) -> List[Workflo
 
     # Detect AKS credential access
     has_aks = bool(_AKS_CREDS_RE.search(content))
+
+    # Detect all cloud/infra resource access patterns
+    cloud_resources = _detect_resource_access(content)
 
     # ── AWS OIDC ──
     for match in _AWS_OIDC_RE.finditer(content):
@@ -260,6 +479,7 @@ def _parse_workflow(content: str, filepath: str, repo_name: str) -> List[Workflo
             has_aks_access=has_aks,
             trigger_events=triggers,
             secrets_used=secrets,
+            cloud_resources=cloud_resources,
             raw_step=context.strip()[:200],
         ))
 
@@ -289,6 +509,7 @@ def _parse_workflow(content: str, filepath: str, repo_name: str) -> List[Workflo
             has_aks_access=has_aks,
             trigger_events=triggers,
             secrets_used=secrets,
+            cloud_resources=cloud_resources,
             raw_step=context.strip()[:200],
         ))
 
@@ -308,6 +529,7 @@ def _parse_workflow(content: str, filepath: str, repo_name: str) -> List[Workflo
             has_aks_access=has_aks,
             trigger_events=triggers,
             secrets_used=secrets,
+            cloud_resources=cloud_resources,
             raw_step=content[max(0, match.start() - 30):match.end() + 100].strip()[:200],
         ))
 
@@ -337,6 +559,7 @@ def _parse_workflow(content: str, filepath: str, repo_name: str) -> List[Workflo
             has_aks_access=has_aks,
             trigger_events=triggers,
             secrets_used=secrets,
+            cloud_resources=cloud_resources,
             raw_step=context.strip()[:200],
         ))
 
@@ -446,6 +669,11 @@ def _connection_to_identities(conn: WorkflowOIDCConnection, repo_name: str) -> L
                 "role_arn": conn.role_arn,
                 "trigger_events": conn.trigger_events,
                 "has_oidc_permission": conn.has_oidc_permission,
+                "cloud_resources": [
+                    {"resource_type": r.resource_type, "action": r.action,
+                     "resource_name": r.resource_name, "severity": r.severity}
+                    for r in conn.cloud_resources
+                ],
             },
             risk_flags=risk_flags,
         ))
@@ -470,6 +698,11 @@ def _connection_to_identities(conn: WorkflowOIDCConnection, repo_name: str) -> L
                 "azure_tenant_id": conn.azure_tenant_id,
                 "trigger_events": conn.trigger_events,
                 "has_oidc_permission": conn.has_oidc_permission,
+                "cloud_resources": [
+                    {"resource_type": r.resource_type, "action": r.action,
+                     "resource_name": r.resource_name, "severity": r.severity}
+                    for r in conn.cloud_resources
+                ],
             },
             risk_flags=risk_flags,
         ))
@@ -496,6 +729,11 @@ def _connection_to_identities(conn: WorkflowOIDCConnection, repo_name: str) -> L
                 "keyvault_secrets": conn.keyvault_secrets,
                 "has_aks_access": conn.has_aks_access,
                 "trigger_events": conn.trigger_events,
+                "cloud_resources": [
+                    {"resource_type": r.resource_type, "action": r.action,
+                     "resource_name": r.resource_name, "severity": r.severity}
+                    for r in conn.cloud_resources
+                ],
             },
             risk_flags=risk_flags,
         ))
@@ -520,6 +758,11 @@ def _connection_to_identities(conn: WorkflowOIDCConnection, repo_name: str) -> L
                 "gcp_wif_provider": conn.gcp_wif_provider,
                 "trigger_events": conn.trigger_events,
                 "has_oidc_permission": conn.has_oidc_permission,
+                "cloud_resources": [
+                    {"resource_type": r.resource_type, "action": r.action,
+                     "resource_name": r.resource_name, "severity": r.severity}
+                    for r in conn.cloud_resources
+                ],
             },
             risk_flags=risk_flags,
         ))
@@ -571,7 +814,7 @@ def _extract_triggers(content: str) -> List[str]:
             if val.startswith("["):
                 triggers = [t.strip().strip("'\"") for t in val.strip("[]").split(",")]
             else:
-                triggers = [val.strip()]
+                triggers = [val.strip().strip("'\"")]
     return triggers
 
 

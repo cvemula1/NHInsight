@@ -31,6 +31,7 @@ class EdgeType(str, Enum):
     GCP_WI_MAPS_TO = "gcp_wi_maps_to"       # K8s SA → GCP SA (GKE WI)
     DEPLOYS_TO = "deploys_to"               # GitHub App → target
     OIDC_ASSUMES_ROLE = "oidc_assumes_role"  # GH Actions OIDC → cloud role
+    ACCESSES_RESOURCE = "accesses_resource"  # identity → cloud/infra resource
 
 
 @dataclass
@@ -634,6 +635,70 @@ def build_graph(identities: List[Identity]) -> IdentityGraph:
                     edge_type=EdgeType.OIDC_ASSUMES_ROLE,
                     label=f"OIDC → {sa_name}",
                 ))
+
+    # GitHub Actions / OIDC identities → cloud resource access
+    # Creates synthetic resource nodes for every detected cloud/infra resource
+    _PRIVILEGED_RESOURCE_TYPES = {
+        "azure_keyvault", "azure_aks", "azure_sql", "azure_cosmosdb",
+        "azure_ad", "azure_iam", "azure_storage", "azure_dns",
+        "aws_secrets", "aws_iam", "aws_s3", "aws_eks", "aws_rds",
+        "gcp_secrets", "gcp_gke", "gcp_iam", "gcp_sql",
+        "k8s_secret", "terraform", "pulumi",
+    }
+    _RESOURCE_PROVIDER_MAP = {
+        "azure_": "azure", "aws_": "aws", "gcp_": "gcp",
+        "k8s": "kubernetes", "helm": "kubernetes",
+        "terraform": "iac", "pulumi": "iac", "ansible": "iac",
+        "container_": "docker", "cloudflare": "cloudflare",
+    }
+
+    for oidc in by_type.get(IdentityType.GITHUB_ACTIONS_OIDC, []):
+        cloud_resources = oidc.raw.get("cloud_resources", [])
+        if not cloud_resources:
+            continue
+
+        for res in cloud_resources:
+            rtype = res.get("resource_type", "") if isinstance(res, dict) else getattr(res, "resource_type", "")
+            action = res.get("action", "") if isinstance(res, dict) else getattr(res, "action", "")
+            rname = res.get("resource_name", "") if isinstance(res, dict) else getattr(res, "resource_name", "")
+            severity = res.get("severity", "high") if isinstance(res, dict) else getattr(res, "severity", "high")
+
+            if not rtype:
+                continue
+
+            # Determine provider for the resource node
+            res_provider = "cloud"
+            for prefix, prov in _RESOURCE_PROVIDER_MAP.items():
+                if rtype.startswith(prefix):
+                    res_provider = prov
+                    break
+
+            # Build a unique node ID for deduplication
+            res_id = f"resource:{rtype}:{rname}" if rname else f"resource:{rtype}"
+            label = f"{rname} ({action})" if rname else f"{rtype.replace('_', ' ').title()} ({action})"
+            is_priv = rtype in _PRIVILEGED_RESOURCE_TYPES or severity == "critical"
+
+            if res_id not in graph.nodes:
+                graph.add_node(GraphNode(
+                    id=res_id,
+                    label=label,
+                    node_type=rtype,
+                    provider=res_provider,
+                    is_privileged=is_priv,
+                    metadata={
+                        "resource_type": rtype,
+                        "action": action,
+                        "resource_name": rname,
+                        "severity": severity,
+                        "synthetic": True,
+                    },
+                ))
+            graph.add_edge(GraphEdge(
+                source_id=oidc.id,
+                target_id=res_id,
+                edge_type=EdgeType.ACCESSES_RESOURCE,
+                label=f"{oidc.raw.get('auth_method', 'auth')} → {label}",
+            ))
 
     logger.info(
         "Built identity graph: %d nodes, %d edges, "

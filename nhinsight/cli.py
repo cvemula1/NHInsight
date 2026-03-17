@@ -131,6 +131,9 @@ def _build_parser() -> argparse.ArgumentParser:
     out_group.add_argument("--ascii", action="store_true",
                            help="ASCII-safe output (no emoji); auto-enabled in CI environments")
     out_group.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
+    out_group.add_argument("--fail-on", choices=["critical", "high", "medium", "low"],
+                           help="Exit with code 1 if any identity has this severity or higher "
+                                "(useful for CI gating, e.g. --fail-on high)")
 
     # ── demo command ───────────────────────────────────────────────
     demo_p = sub.add_parser(
@@ -233,11 +236,13 @@ def _run_scan(args: argparse.Namespace) -> None:
         if args.k8s:
             providers.append("k8s")
 
-    if not providers:
+    has_workflows = bool(getattr(args, "github_workflows", None))
+    if not providers and not has_workflows:
         print("\n  No providers selected.\n")
         print("  \033[1mQuick examples:\033[0m")
         print("    nhinsight scan --aws                  Scan AWS IAM")
         print("    nhinsight scan --all --attack-paths   Scan everything")
+        print("    nhinsight scan --github-workflows     Scan GH Actions only")
         print("    nhinsight demo                        Try with sample data first")
         print()
         print("  Providers: --aws  --azure  --gcp  --github  --k8s  --all\n")
@@ -386,6 +391,27 @@ def _run_scan(args: argparse.Namespace) -> None:
     if args.output:
         out.close()
         print(f"Results written to {args.output}")
+
+    # --fail-on: exit 1 if any identity meets or exceeds the threshold severity
+    fail_on = getattr(args, "fail_on", None)
+    if fail_on:
+        from nhinsight.core.models import Severity
+        threshold_map = {
+            "critical": Severity.CRITICAL,
+            "high": Severity.HIGH,
+            "medium": Severity.MEDIUM,
+            "low": Severity.LOW,
+        }
+        threshold = threshold_map[fail_on]
+        severity_order = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW]
+        failing_sevs = set(severity_order[:severity_order.index(threshold) + 1])
+        count = sum(
+            1 for i in result.identities if i.highest_severity in failing_sevs
+        )
+        if count:
+            print(f"\n[FAIL] {count} identit{'y' if count == 1 else 'ies'} "
+                  f"at {fail_on.upper()} severity or above (--fail-on {fail_on})")
+            sys.exit(1)
 
 
 def _build_demo_data() -> ScanResult:

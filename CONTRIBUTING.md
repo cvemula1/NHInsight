@@ -8,7 +8,7 @@ Hey, glad you're here. Setup takes about 2 minutes.
 git clone https://github.com/cvemula1/NHInsight.git
 cd NHInsight
 make dev       # installs all providers + dev tools
-make test      # 151 tests, <1 second
+make test      # 260 tests, <2 seconds
 make demo      # see output without credentials
 ```
 

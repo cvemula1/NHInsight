@@ -428,6 +428,11 @@ EDGE_RECOMMENDATIONS = {
         "Use sub claim conditions (repo:org/repo:ref:refs/heads/main). "
         "Replace admin policies with least-privilege scoped to deployment needs."
     ),
+    EdgeType.ACCESSES_RESOURCE: (
+        "Apply least-privilege access to each cloud resource. "
+        "Scope credentials to only the specific resources and actions needed. "
+        "Add environment protection rules and branch restrictions on the workflow."
+    ),
 }
 
 

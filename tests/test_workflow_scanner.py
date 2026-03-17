@@ -127,6 +127,90 @@ MULTI_CLOUD_WORKFLOW = textwrap.dedent("""\
               service_account: deployer@prod.iam.gserviceaccount.com
 """)
 
+MANAGED_IDENTITY_WORKFLOW = textwrap.dedent("""\
+    name: Deploy with MI
+    on:
+      push:
+        branches: [main]
+      pull_request:
+        branches: [main]
+
+    jobs:
+      deploy:
+        runs-on: my-custom-runner
+        steps:
+        - name: Azure Login
+          run: az login --identity --allow-no-subscriptions
+        - name: Get secrets
+          run: |
+            TENANT=$(az keyvault secret show --vault-name my-kv --name tenant-id --query value -o tsv)
+            SUB=$(az keyvault secret show --name sub-id --vault-name my-kv --query value -o tsv)
+        - name: Get AKS creds
+          run: az aks get-credentials --resource-group rg --name my-cluster
+""")
+
+KV_ENV_REF_WORKFLOW = textwrap.dedent("""\
+    name: KV Env Test
+    on: push
+
+    env:
+      BACKEND_VAULT_NAME: seaionl-prod-kv
+
+    jobs:
+      deploy:
+        runs-on: [self-hosted]
+        steps:
+        - run: az login --identity
+        - run: |
+            T=$(az keyvault secret show --vault-name ${{ env.BACKEND_VAULT_NAME }} \
+              --name tenant-id --query value -o tsv)
+            S=$(az keyvault secret show --vault-name ${{ env.BACKEND_VAULT_NAME }} \
+              --name sub-id --query value -o tsv)
+""")
+
+COMMENTED_OIDC_WORKFLOW = textwrap.dedent("""\
+    name: No OIDC
+    on: push
+    # permissions:
+    #   id-token: write
+    jobs:
+      build:
+        runs-on: ubuntu-latest
+        steps:
+        - uses: aws-actions/configure-aws-credentials@v4
+          with:
+            role-to-assume: arn:aws:iam::123:role/test
+""")
+
+WRITE_ALL_WORKFLOW = textwrap.dedent("""\
+    name: AWS Deploy
+    on: push
+    permissions: write-all
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        steps:
+        - uses: aws-actions/configure-aws-credentials@v4
+          with:
+            role-to-assume: arn:aws:iam::123456789012:role/deploy-admin
+            aws-region: us-east-1
+""")
+
+REUSABLE_WORKFLOW = textwrap.dedent("""\
+    name: Reusable Deploy
+    on:
+      workflow_call:
+        inputs:
+          environment:
+            required: true
+            type: string
+    jobs:
+      deploy:
+        runs-on: [self-hosted, linux, azure]
+        steps:
+        - run: az login --identity
+""")
+
 
 # ── Parser tests ───────────────────────────────────────────────────────
 
@@ -172,6 +256,62 @@ class TestParseWorkflow:
         conns = _parse_workflow(AWS_OIDC_WORKFLOW, "deploy.yml", "acme/app")
         assert "push" in conns[0].trigger_events or "pull_request" in conns[0].trigger_events
 
+    def test_parse_managed_identity(self):
+        conns = _parse_workflow(MANAGED_IDENTITY_WORKFLOW, "deploy-mi.yml", "acme/app")
+        assert len(conns) == 1
+        c = conns[0]
+        assert c.auth_method == "managed_identity"
+        assert c.cloud_provider == "azure"
+        assert c.self_hosted_runner == "my-custom-runner"
+        assert c.keyvault_name == "my-kv"
+        assert "tenant-id" in c.keyvault_secrets
+        assert "sub-id" in c.keyvault_secrets
+        assert c.has_aks_access is True
+        assert "push" in c.trigger_events
+        assert "pull_request" in c.trigger_events
+
+    def test_parse_kv_env_ref(self):
+        conns = _parse_workflow(KV_ENV_REF_WORKFLOW, "kv-env.yml", "acme/app")
+        assert len(conns) == 1
+        c = conns[0]
+        assert c.keyvault_name == "seaionl-prod-kv"
+        assert "tenant-id" in c.keyvault_secrets
+        assert "sub-id" in c.keyvault_secrets
+
+    def test_commented_oidc_not_detected(self):
+        conns = _parse_workflow(COMMENTED_OIDC_WORKFLOW, "no-oidc.yml", "acme/app")
+        assert len(conns) == 1
+        assert conns[0].has_oidc_permission is False
+
+    def test_write_all_detected_as_oidc(self):
+        conns = _parse_workflow(WRITE_ALL_WORKFLOW, "wa.yml", "acme/app")
+        assert len(conns) == 1
+        assert conns[0].has_oidc_permission is True
+
+    def test_reusable_workflow_call(self):
+        conns = _parse_workflow(REUSABLE_WORKFLOW, "reusable.yml", "acme/app")
+        assert len(conns) == 1
+        assert "workflow_call" in conns[0].trigger_events
+        assert conns[0].auth_method == "managed_identity"
+        assert "self-hosted" in conns[0].self_hosted_runner
+
+    def test_self_hosted_string_format(self):
+        wf = "name: T\non: push\njobs:\n  j:\n    runs-on: my-runner\n    steps:\n    - run: az login --identity\n"
+        conns = _parse_workflow(wf, "t.yml", "r")
+        assert len(conns) == 1
+        assert conns[0].self_hosted_runner == "my-runner"
+
+    def test_kv_reversed_arg_order(self):
+        wf = (
+            "name: T\non: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n    - run: az login --identity\n"
+            "    - run: az keyvault secret show --name my-secret --vault-name my-vault\n"
+        )
+        conns = _parse_workflow(wf, "t.yml", "r")
+        assert len(conns) == 1
+        assert conns[0].keyvault_name == "my-vault"
+        assert "my-secret" in conns[0].keyvault_secrets
+
 
 class TestExtractTriggers:
     def test_inline_single(self):
@@ -189,6 +329,32 @@ class TestExtractTriggers:
         triggers = _extract_triggers(content)
         assert "push" in triggers
         assert "pull_request" in triggers
+
+    def test_quoted_inline(self):
+        content = "on: 'push'\njobs:\n"
+        assert _extract_triggers(content) == ["push"]
+
+    def test_workflow_dispatch(self):
+        content = "on:\n  workflow_dispatch:\njobs:\n"
+        assert _extract_triggers(content) == ["workflow_dispatch"]
+
+    def test_workflow_call(self):
+        content = "on:\n  workflow_call:\n    inputs:\n      env:\n        type: string\njobs:\n"
+        assert _extract_triggers(content) == ["workflow_call"]
+
+    def test_schedule_and_push(self):
+        content = "on:\n  schedule:\n    - cron: '0 0 * * *'\n  push:\n    branches: [main]\njobs:\n"
+        triggers = _extract_triggers(content)
+        assert "schedule" in triggers
+        assert "push" in triggers
+
+    def test_subkeys_not_included(self):
+        content = "on:\n  push:\n    branches: [main]\n    tags:\n      - 'v*'\n    paths:\n      - 'src/**'\njobs:\n"
+        triggers = _extract_triggers(content)
+        assert triggers == ["push"]
+        assert "branches" not in triggers
+        assert "tags" not in triggers
+        assert "paths" not in triggers
 
 
 class TestFindJobName:

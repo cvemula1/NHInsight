@@ -7,8 +7,12 @@ branding:
   color: "red"
 
 inputs:
+  version:
+    description: "NHInsight version to install (default: latest)"
+    required: false
+    default: ""
   providers:
-    description: "Providers to scan (e.g. --aws --azure). Leave empty for workflow-only scan."
+    description: "Provider flags to scan (e.g. '--aws --azure'). Leave empty for workflow-only scan."
     required: false
     default: ""
   github-workflows:
@@ -19,6 +23,10 @@ inputs:
     description: "Enable attack path analysis"
     required: false
     default: "true"
+  fail-on:
+    description: "Fail the step if any identity has this severity or higher (critical, high, medium, low)"
+    required: false
+    default: "high"
   format:
     description: "Output format (table, json, sarif)"
     required: false
@@ -31,9 +39,19 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+
     - name: Install NHInsight
       shell: bash
-      run: pip install nhinsight
+      run: |
+        if [ -n "${{ inputs.version }}" ]; then
+          pip install "nhinsight==${{ inputs.version }}"
+        else
+          pip install nhinsight
+        fi
 
     - name: Run NHInsight scan
       shell: bash
@@ -57,12 +75,17 @@ runs:
           ARGS="$ARGS --attack-paths"
         fi
 
-        # CI summary to step summary
+        # CI summary (writes to $GITHUB_STEP_SUMMARY automatically)
         ARGS="$ARGS --ci-summary"
 
         # ASCII safe
         if [ "${{ inputs.ascii }}" = "true" ]; then
           ARGS="$ARGS --ascii"
+        fi
+
+        # Fail on severity threshold
+        if [ -n "${{ inputs.fail-on }}" ]; then
+          ARGS="$ARGS --fail-on ${{ inputs.fail-on }}"
         fi
 
         nhinsight $ARGS
