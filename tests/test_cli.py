@@ -40,4 +40,4 @@ def test_scan_no_provider():
         capture_output=True, text=True,
     )
     assert result.returncode == 1
-    assert "No providers specified" in result.stdout
+    assert "No providers selected" in result.stdout

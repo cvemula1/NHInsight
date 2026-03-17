@@ -6,6 +6,7 @@ build/
 .eggs/
 *.egg
 
+marketing/
 # Virtual environments
 .venv/
 venv/

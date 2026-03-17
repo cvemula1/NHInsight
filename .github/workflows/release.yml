@@ -74,25 +74,24 @@ jobs:
             --ignore-unfixed \
             ${{ env.DOCKER_IMAGE }}:${{ steps.version.outputs.VERSION }}
 
-  # PyPI publish — uncomment PYPI_API_TOKEN secret when ready
-  # pypi-publish:
-  #   name: PyPI Publish
-  #   needs: test
-  #   runs-on: ubuntu-latest
-  #   environment: release
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-python@v5
-  #       with:
-  #         python-version: "3.13"
-  #     - run: pip install --upgrade pip build twine
-  #     - name: Build package
-  #       run: python -m build
-  #     - name: Publish to PyPI
-  #       env:
-  #         TWINE_USERNAME: __token__
-  #         TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-  #       run: python -m twine upload dist/*
+  pypi-publish:
+    name: PyPI Publish
+    needs: test
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --upgrade pip build twine
+      - name: Build package
+        run: python -m build
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: python -m twine upload dist/*
 
   github-release:
     name: GitHub Release
