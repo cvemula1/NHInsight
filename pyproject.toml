@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nhinsight"
 version = "0.1.0"
-description = "Non-Human Identity discovery for cloud infrastructure"
+description = "Discover risky non-human identities and privilege paths across AWS, Azure, GCP, GitHub, and Kubernetes"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -13,9 +13,11 @@ authors = [{name = "cvemula1", email = "cvemula1@users.noreply.github.com"}]
 keywords = ["security", "identity", "nhi", "aws", "gcp", "azure", "kubernetes", "github", "devsecops"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -24,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Security",
     "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
 ]
 dependencies = [
     "boto3>=1.28",
@@ -48,7 +51,9 @@ nhinsight = "nhinsight.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/cvemula1/NHInsight"
+Documentation = "https://github.com/cvemula1/NHInsight#quick-start"
 Repository = "https://github.com/cvemula1/NHInsight"
+Changelog = "https://github.com/cvemula1/NHInsight/releases"
 Issues = "https://github.com/cvemula1/NHInsight/issues"
 
 [tool.setuptools.packages.find]

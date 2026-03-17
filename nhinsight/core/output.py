@@ -28,7 +28,7 @@ SEVERITY_COLORS = {
 
 SEVERITY_ICONS = {
     Severity.CRITICAL: "🔴",
-    Severity.HIGH: "🔴",
+    Severity.HIGH: "�",
     Severity.MEDIUM: "🟡",
     Severity.LOW: "🔵",
     Severity.INFO: "🟢",
@@ -368,7 +368,7 @@ def print_attack_paths(ap_result, out: TextIO = sys.stdout) -> None:
     stats = ap_result.graph_stats
 
     out.write(f"\n  {'═' * 56}\n")
-    out.write(f"  {BOLD}Identity Attack Path Analysis{RESET}\n")
+    out.write(f"  {BOLD}Privilege Escalation Paths{RESET}\n")
     out.write(f"  {'─' * 56}\n\n")
 
     out.write(f"  Graph: {stats.get('nodes', 0)} nodes, ")
@@ -395,9 +395,9 @@ def print_attack_paths(ap_result, out: TextIO = sys.stdout) -> None:
         color = SEVERITY_COLORS.get(sev, RESET)
         icon = SEVERITY_ICONS.get(sev, "⚪")
 
-        out.write(f"  {color}{icon} {path.id}{RESET}")
+        out.write(f"  {color}{icon} {path.id} — {path.description}{RESET}")
         out.write(f"  {BOLD}{sev.value.upper()}{RESET}")
-        blast_str = f"  blast: {path.blast_radius:.0f}/100"
+        blast_str = f"  risk: {path.blast_radius:.0f}/100"
         out.write(f"  {DIM}{blast_str}{RESET}")
         if path.cross_system:
             out.write(f"  {CYAN}⚡ cross-system{RESET}")

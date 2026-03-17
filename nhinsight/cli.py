@@ -108,7 +108,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # Analysis options
     analysis_group = scan_p.add_argument_group("analysis")
     analysis_group.add_argument("--attack-paths", action="store_true",
-                                help="Run identity attack path analysis")
+                                help="Trace privilege escalation chains across providers (e.g. K8s SA → cloud admin)")
+    analysis_group.add_argument("--mermaid", action="store_true",
+                                help="Output attack paths as Mermaid diagrams (implies --attack-paths)")
     analysis_group.add_argument("--stale-days", type=int, default=90, metavar="N",
                                 help="Days without use before flagging as stale (default: 90)")
     analysis_group.add_argument("--explain", action="store_true",
@@ -133,6 +135,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         choices=["table", "json", "sarif", "markdown", "md"],
                         default="table", help="Output format (default: table)")
     demo_p.add_argument("--output", "-o", metavar="FILE", help="Write output to file")
+    demo_p.add_argument("--attack-paths", action="store_true",
+                        help="Include attack path analysis in demo output")
+    demo_p.add_argument("--mermaid", action="store_true",
+                        help="Output attack paths as Mermaid diagrams (implies --attack-paths)")
 
     # ── report command ─────────────────────────────────────────────
     report_p = sub.add_parser(
@@ -146,6 +152,20 @@ def _build_parser() -> argparse.ArgumentParser:
                           choices=["markdown", "md", "json", "sarif"],
                           default="markdown", help="Report format (default: markdown)")
     report_p.add_argument("--output", "-o", metavar="FILE", help="Write report to file")
+
+    # ── graph command ──────────────────────────────────────────────
+    graph_p = sub.add_parser(
+        "graph",
+        help="Render attack path graphs from saved JSON output",
+        description="Read NHInsight JSON output and render attack path diagrams. "
+                    "Useful for generating Mermaid diagrams from previously saved scans.",
+    )
+    graph_p.add_argument("--input", "-i", metavar="FILE", required=True,
+                         help="Path to NHInsight JSON output file")
+    graph_p.add_argument("--output", "-o", metavar="FILE",
+                         help="Write Mermaid output to file (default: stdout)")
+    graph_p.add_argument("--split", action="store_true",
+                         help="Render each attack path as a separate diagram")
 
     # ── version command ────────────────────────────────────────────
     sub.add_parser("version", help="Show version")
@@ -200,7 +220,13 @@ def _run_scan(args: argparse.Namespace) -> None:
             providers.append("k8s")
 
     if not providers:
-        print("No providers specified. Use --aws, --azure, --gcp, --github, --k8s, or --all")
+        print("\n  No providers selected.\n")
+        print("  \033[1mQuick examples:\033[0m")
+        print("    nhinsight scan --aws                  Scan AWS IAM")
+        print("    nhinsight scan --all --attack-paths   Scan everything")
+        print("    nhinsight demo                        Try with sample data first")
+        print()
+        print("  Providers: --aws  --azure  --gcp  --github  --k8s  --all\n")
         sys.exit(1)
 
     # Collect identities from each provider
@@ -295,12 +321,19 @@ def _run_scan(args: argparse.Namespace) -> None:
     print_result(result, fmt=args.format, out=out)
 
     # Attack path analysis (if requested)
-    if getattr(args, "attack_paths", False) and all_identities:
+    # --mermaid implies --attack-paths
+    wants_attack = getattr(args, "attack_paths", False) or getattr(args, "mermaid", False)
+    if wants_attack and all_identities:
         from nhinsight.analyzers.attack_paths import analyze_attack_paths
         from nhinsight.core.output import print_attack_paths
 
         ap_result = analyze_attack_paths(all_identities)
         print_attack_paths(ap_result, out=out)
+
+        if getattr(args, "mermaid", False):
+            from nhinsight.core.mermaid import render_attack_paths, render_summary_table
+            render_summary_table(ap_result, out=out)
+            render_attack_paths(ap_result, out=out)
 
     if args.output:
         out.close()
@@ -1091,6 +1124,96 @@ def _print_demo_table(result: ScanResult) -> None:
             print(f"  {i}. {line}")
     print(f"  {BOLD}{'─' * 60}{RESET}\n")
 
+    # Post-demo suggestions
+    print(f"  {BOLD}Try it on your infrastructure:{RESET}")
+    print("    nhinsight scan --aws              Scan AWS IAM")
+    print("    nhinsight scan --all              Scan all providers")
+    print("    nhinsight scan --aws --explain    AI-powered explanations")
+    print("    nhinsight scan --all -f sarif     SARIF for GitHub Security tab")
+    print()
+
+
+def _run_graph(args: argparse.Namespace) -> None:
+    """Load saved JSON output and render Mermaid attack path diagrams."""
+    import json
+
+    from nhinsight.analyzers.attack_paths import (
+        AttackPath,
+        AttackPathResult,
+        AttackPathStep,
+    )
+    from nhinsight.core.mermaid import (
+        render_attack_paths,
+        render_attack_paths_individual,
+        render_summary_table,
+    )
+    from nhinsight.core.models import Severity
+
+    input_path = args.input
+    try:
+        with open(input_path) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"Error: file not found: {input_path}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: invalid JSON in {input_path}: {e}")
+        sys.exit(1)
+
+    # Reconstruct AttackPathResult from JSON
+    # Support both full scan output (with "attack_paths" key) and direct AP output
+    ap_data = data if "paths" in data else data.get("attack_paths", data)
+
+    if "paths" not in ap_data:
+        print("Error: no attack path data found in JSON. "
+              "Run scan with --attack-paths -f json first.")
+        sys.exit(1)
+
+    sev_map = {s.value: s for s in Severity}
+
+    paths = []
+    for p in ap_data["paths"]:
+        steps = [
+            AttackPathStep(
+                node_id=s["node_id"],
+                node_label=s["node_label"],
+                node_type=s["node_type"],
+                provider=s["provider"],
+                edge_type=s.get("edge_type"),
+                edge_label=s.get("edge_label", ""),
+            )
+            for s in p.get("steps", [])
+        ]
+        paths.append(AttackPath(
+            id=p.get("id", "AP-???"),
+            steps=steps,
+            severity=sev_map.get(p.get("severity", "medium"), Severity.MEDIUM),
+            blast_radius=float(p.get("blast_radius", 0)),
+            cross_system=p.get("cross_system", False),
+            description=p.get("description", ""),
+            recommendation=p.get("recommendation", ""),
+        ))
+
+    ap_result = AttackPathResult(
+        paths=paths,
+        graph_stats=ap_data.get("graph", {}),
+    )
+
+    out = sys.stdout
+    if args.output:
+        out = open(args.output, "w")
+
+    render_summary_table(ap_result, out=out)
+
+    if getattr(args, "split", False):
+        render_attack_paths_individual(ap_result, out=out)
+    else:
+        render_attack_paths(ap_result, out=out)
+
+    if args.output:
+        out.close()
+        print(f"Mermaid output written to {args.output}")
+
 
 def _output_result(result: ScanResult, fmt: str, output_path: str | None) -> None:
     """Output a ScanResult in the requested format, optionally to a file."""
@@ -1118,6 +1241,25 @@ def main():
             _print_demo_table(result)
         else:
             _output_result(result, fmt, output_path)
+        # Attack path analysis for demo (--attack-paths or --mermaid)
+        wants_attack = getattr(args, "attack_paths", False) or getattr(args, "mermaid", False)
+        if wants_attack:
+            from nhinsight.analyzers.attack_paths import analyze_attack_paths
+            ap_result = analyze_attack_paths(result.identities)
+            out = sys.stdout
+            if output_path:
+                out = open(output_path, "a")
+            if not getattr(args, "mermaid", False):
+                from nhinsight.core.output import print_attack_paths
+                print_attack_paths(ap_result, out=out)
+            if getattr(args, "mermaid", False):
+                from nhinsight.core.mermaid import render_attack_paths, render_summary_table
+                render_summary_table(ap_result, out=out)
+                render_attack_paths(ap_result, out=out)
+            if output_path:
+                out.close()
+    elif args.command == "graph":
+        _run_graph(args)
     elif args.command == "report":
         if getattr(args, "demo", False):
             result = _build_demo_data()
@@ -1131,6 +1273,10 @@ def main():
         print(f"nhinsight {__version__}")
     else:
         parser.print_help()
+        print("\n  \033[1mQuick start:\033[0m")
+        print("    nhinsight demo            # sample data, no credentials needed")
+        print("    nhinsight scan --aws      # scan your AWS account")
+        print()
 
 
 if __name__ == "__main__":
