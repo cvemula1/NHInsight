@@ -15,25 +15,29 @@
 ## Quick Start
 
 ```bash
-pip install nhinsight
-nhinsight demo
+pip install nhinsight          # install from PyPI
+nhinsight demo                 # see it in action (no credentials needed)
 ```
 
-Scan a real environment:
+> **Try it in 30 seconds** — `nhinsight demo` runs with built-in sample data so you can see findings, attack paths, and risk scores instantly.
+
+### Scan a real environment
 
 ```bash
+# Single provider
 nhinsight scan --aws
+
+# Multi-provider with attack path analysis
 nhinsight scan --all --attack-paths
-nhinsight scan --scan-github-workflows .github/workflows --attack-paths
-```
 
-Or use Docker:
+# CI/CD workflow scanning (no cloud creds required)
+nhinsight scan --github-workflows .github/workflows --attack-paths
 
-```bash
+# Docker (zero install)
 docker run --rm chvemula/nhinsight demo
 ```
 
-## Example Output
+### Example: Identity Risk Findings
 
 ```
   🔴 CRITICAL — deploy-bot (iam_user, aws)
@@ -42,13 +46,26 @@ docker run --rm chvemula/nhinsight demo
   🔴 CRITICAL — terraform-deployer (gcp_service_account, gcp)
   │  Service account has roles/owner
 
-  🔴 CRITICAL — aks-cluster-sp (azure_sp, azure)
+  � HIGH — aks-cluster-sp (azure_sp, azure)
   │  SP has Contributor at subscription scope
 
-  � HIGH — terraform-deployer/key:abc123de (gcp_sa_key, gcp)
-  │  SA key is 400 days old (max 365)
+  🟡 MEDIUM — ci-runner-mi (managed_identity, azure)
+  │  Self-hosted runner MI accesses Key Vault + AKS + ACR
+```
 
-  Summary: 25+ risky non-human identities across 5 providers
+### Example: Attack Path Detection
+
+```
+  ⚡ CRITICAL  blast=86  github → azure → kubernetes
+  MI → Azure (PR Deploy to Dev) → Key Vault (secret access)
+  → AKS Cluster (get-credentials) → K8s Secret (create)
+  Recommendation: Scope MI to least-privilege. Add environment protection rules.
+
+  ⚡ CRITICAL  blast=83  github → iac
+  MI → Azure (Deploy Infra) → Terraform (infra apply)
+  Recommendation: Restrict runner identity to read-only. Use plan-only in PRs.
+
+  Summary: 31 attack paths across 43 workflows, 222 resource accesses detected
 ```
 
 ## What It Finds
